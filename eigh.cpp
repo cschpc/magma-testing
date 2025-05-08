@@ -132,16 +132,32 @@ struct solver_backend_types<T, enable_if_complex<T>>
     #define VEC_MODE_NO      MagmaNoVec
     #define VEC_MODE_YES     MagmaVec
 
+    namespace cscmagma
+    {
+        // Templated MAGMA malloc on host, allocs num_elements * sizeof(T) bytes
+        template<typename T>
+        inline magma_int_t host_malloc(T** ptr, size_t num_elements)
+        {
+            return magma_malloc_cpu(reinterpret_cast<void**>(ptr), num_elements * sizeof(T));
+        }
+
+        // Templated MAGMA free on host
+        template<typename T>
+        inline magma_int_t host_free(T* ptr)
+        {
+            return magma_free_cpu(static_cast<void*>(ptr));
+        }
+    }
+
     template<typename T>
     struct MagmaHelpers
     {
-
         using matrix_dtype = typename solver_backend_types<T>::dtype_matrix;
         using real_t = typename solver_backend_types<T>::dtype_eigval;
 
+
         static real_t real_part(matrix_dtype magma_number)
         {
-
             if constexpr (is_complex_t<T>::value)
             {
                 // ::real() for magma c-variables defined in magma_operators.h
@@ -482,9 +498,6 @@ struct Calculator
         lwork_opt = static_cast<magma_int_t>(MagmaHelpers<T>::real_part(work_temp));
         lrwork_opt = static_cast<magma_int_t>(rwork_temp);
         liwork_opt = iwork_temp;
-
-        const magma_int_t NB = magma_get_dsytrd_nb(n);
-        const size_t min_possible_lwork = std::max<size_t>(2*n + n*NB, 1 + 6*n + 2*n*n);
     }
 
 #elif defined(CUDA)
@@ -509,7 +522,7 @@ struct Calculator
     {
 
 #if defined(MAGMA)
-        magma_init();
+        MAGMA_CHECK(magma_init());
         magma_queue_create(0, &queue);
     #if defined(CUDA)
         stream = magma_queue_get_cuda_stream(queue);
@@ -520,10 +533,9 @@ struct Calculator
         magma_query_work_sizes(lwork, lrwork, liwork);
 
         // Allocate work arrays
-        h_wA = reinterpret_cast<backend_dtype*>(malloc(sizeof(backend_dtype) * lda*n));
-        h_work = reinterpret_cast<backend_dtype*>(malloc(sizeof(backend_dtype) * lwork));
-        h_iwork = reinterpret_cast<magma_int_t*>(malloc(sizeof(magma_int_t) * liwork));
-
+        MAGMA_CHECK(cscmagma::host_malloc(&h_wA, lda*n));
+        MAGMA_CHECK(cscmagma::host_malloc(&h_work, lwork));
+        MAGMA_CHECK(cscmagma::host_malloc(&h_iwork, liwork));
         if constexpr (is_complex_t<T>::value)
         {
             assert(lrwork > 0 && "Invalid lrwork (complex solver)");
@@ -567,11 +579,11 @@ struct Calculator
     ~Calculator()
     {
 #if defined(MAGMA)
-        free(h_iwork);
-        free(h_wA);
-        free(h_work);
+        MAGMA_CHECK(cscmagma::host_free(h_iwork));
+        MAGMA_CHECK(cscmagma::host_free(h_wA));
+        MAGMA_CHECK(cscmagma::host_free(h_work));
         magma_queue_destroy(queue);
-        magma_finalize();
+        MAGMA_CHECK(magma_finalize());
 
 #elif defined(CUDA)
         cudaFree(d_work);
