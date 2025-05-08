@@ -18,6 +18,21 @@
 #ifdef MAGMA
     #include "magma_v2.h"
     #include "magma_operators.h"
+
+    // Check error code of a MAGMA function. Intended for fatal errors, so we exit on failure.
+    #define MAGMA_CHECK(result) check_magma_errorcode(result, __FILE__, __LINE__)
+
+    inline void check_magma_errorcode(magma_int_t result, const char *file, int line)
+    {
+        #ifndef DISABLE_MAGMA_CHECKS
+        if (result != MAGMA_SUCCESS)
+        {
+            printf("\n\n%s in %s at line %d\n", magma_strerror(result), file, line);
+            exit(EXIT_FAILURE);
+        }
+        #endif
+    }
+
 #endif // ifdef MAGMA
 
 #if defined(CUDA)
